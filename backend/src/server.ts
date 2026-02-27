@@ -8,8 +8,10 @@ dotenv.config();
 // Import routes
 import authRoutes from './routes/auth.js';
 import profileRoutes from './routes/profile.js';
-import githubVerifyRoutes from './routes/githubVerify.js';
-import matchingRoutes from './routes/matching.js';
+import leftSwipeRoutes from './routes/leftswipe.js';
+import recommendationsRoutes from './routes/recommendations.js';
+import settingsRoutes from './routes/settings.js';
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -20,8 +22,10 @@ app.use(express.json()); // Increase limit for base64 images
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/profile', profileRoutes);
-app.use('/api/github-verify', githubVerifyRoutes);
-app.use('/api/matching', matchingRoutes);
+app.use('/api/leftswipe', leftSwipeRoutes);
+app.use('/api/recommendations', recommendationsRoutes);
+app.use('/api/settings', settingsRoutes);
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({
@@ -39,5 +43,8 @@ app.listen(PORT, () => {
   console.log(` Login: POST http://localhost:${PORT}/api/auth/login`);
   console.log(` Get Profile: GET http://localhost:${PORT}/api/profile/me`);
   console.log(` Update Profile: PUT http://localhost:${PORT}/api/profile/me`);
-  console.log(` GitHub Status: GET http://localhost:${PORT}/api/github-verify/status`);
+  console.log(` Left Swipe: POST http://localhost:${PORT}/api/leftswipe`);
+  console.log(` Recommendations: GET http://localhost:${PORT}/api/recommendations`);
+  console.log(` Get Settings: GET http://localhost:${PORT}/api/settings/me`);
+  console.log(` Update Settings: PUT http://localhost:${PORT}/api/settings/me`);
 });

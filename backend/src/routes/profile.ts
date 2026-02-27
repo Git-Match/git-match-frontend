@@ -170,9 +170,17 @@ router.put('/me', profileLimiter, verifyToken, async (req: Request, res: Respons
 });
 
 // Get user profile by ID (public endpoint)
-router.get('/:userId', async (req: Request, res: Response) => {
-  try {
-    const { userId } = req.params;
+router.get("/:userId", async (req: Request, res: Response) => {
+	try {
+		const rawUserId = (req.params as any).userId as string | string[];
+		const userId = Array.isArray(rawUserId) ? rawUserId[0] : rawUserId;
+		if (!userId) {
+			const response: ProfileResponse = {
+				success: false,
+				message: "userId is required",
+			};
+			return res.status(400).json(response);
+		}
 
     const userDoc = await admin.firestore().collection('users').doc(userId).get();
 

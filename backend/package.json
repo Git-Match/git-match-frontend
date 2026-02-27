@@ -19,6 +19,7 @@
     "express": "^4.21.2",
     "express-rate-limit": "^8.2.1",
     "firebase-admin": "^11.11.1",
+    "git-match": "file:..",
     "is-stream-ended": "^0.1.4"
   },
   "devDependencies": {
