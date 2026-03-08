@@ -102,8 +102,8 @@ router.post('/signup', async (req, res) => {
     };
     // include additional token info when available
     if (idToken) {
-      (response as any).refreshToken = refreshToken;
-      (response as any).expiresIn = expiresIn;
+      response.refreshToken = refreshToken;
+      response.expiresIn = expiresIn;
     }
 
     console.log('Signup successful!'); // Debug log
@@ -190,8 +190,8 @@ router.post('/login', async (req, res) => {
         firebaseToken: firebaseToken,
       };
       if (resp.data.refreshToken) {
-        (response as any).refreshToken = resp.data.refreshToken;
-        (response as any).expiresIn = resp.data.expiresIn;
+        response.refreshToken = resp.data.refreshToken;
+        response.expiresIn = resp.data.expiresIn;
       }
 
       res.json(response);

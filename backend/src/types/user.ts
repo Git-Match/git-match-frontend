@@ -67,6 +67,9 @@ export interface SignupRequest {
     message: string;
     user?: UserProfile;
     token?: string;
+    firebaseToken?: string;
+    refreshToken?: string;
+    expiresIn?: string;
   }
   
   export interface ProfileResponse {
