@@ -1,107 +1,73 @@
-# Git Match: The Developer Dating App
+# React + TypeScript + Vite
 
-**Git Match** is a full-stack, monorepo application designed to match developers based on a blend of their personal interests and professional coding habits drawn from their GitHub profile data.
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
------
+Currently, two official plugins are available:
 
-## 🚀 Project Overview
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
 
-Git Match is built as a single repository containing a React frontend and an Express/Node.js backend, communicating via a set of secure APIs.
+## React Compiler
 
-### Core Matching Logic
+The React Compiler is currently not compatible with SWC. See [this issue](https://github.com/vitejs/vite-plugin-react/issues/428) for tracking the progress.
 
-The matching algorithm relies on two primary data pillars:
+## Expanding the ESLint configuration
 
-1.  **Developer DNA (GitHub Data):** Common languages, tech stack, commit consistency, collaboration style, and coding time (night owl vs. day person).
-2.  **Personal Profile Data:** Age, location, gender preference, non-tech interests, and relationship goals, captured during the multi-step onboarding process.
+If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
 
-### Architecture
+```js
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{ts,tsx}'],
+    extends: [
+      // Other configs...
 
-| Component | Technology |
-| :--- | :--- |
-| **Frontend** | React (TSX), Vite, Tailwind CSS
-| **Backend** | Node.js, Express (TypeScript) 
-| **Database** | Firebase Firestore | 
-| **Authentication** | GitHub OAuth, Firebase Admin SDK |
+      // Remove tseslint.configs.recommended and replace with this
+      tseslint.configs.recommendedTypeChecked,
+      // Alternatively, use this for stricter rules
+      tseslint.configs.strictTypeChecked,
+      // Optionally, add this for stylistic rules
+      tseslint.configs.stylisticTypeChecked,
 
------
-
-## 🔐 Authentication & Session Flow
-
-Git Match uses a server-driven authentication flow to maximize security and control. This flow bypasses the Firebase Client SDK for session management by relying on a custom Session Token.
-
-1.  **Sign-up/Login:** User submits credentials or initiates GitHub OAuth.
-2.  **Backend Auth:** The backend (`/api/auth/signup` or `/api/auth/login`) verifies the user's identity using Firebase Admin SDK.
-3.  **Session Token Minting:** The backend generates a secure **Session Token** (a manual JWT).
-4.  **Client Handoff:** The backend returns this Session Token and the initial User Profile data to the frontend.
-5.  **Client Session:** The React `AuthContext` stores the Session Token in `localStorage`. For all authenticated API calls (like fetching profile or submitting onboarding data), the token is sent in the `Authorization: Bearer <token>` header.
-
------
-
-## 🔑 Key Files & Endpoints
-
-### Frontend Core
-
-| File | Role | Description |
-| :--- | :--- | :--- |
-| `frontend/src/context/AuthContext.tsx` | **Session Manager** | Centralizes user state, handles local storage persistence of the Session Token, and executes all API calls for sign-up/login. |
-| `frontend/src/pages/Onboarding.tsx` | **Onboarding UI** | Multi-step form to collect crucial matching data (Age, Geo, Interests, Goals). **(In Progress)** |
-| `frontend/src/config/firebase.ts` | **Client Setup** | Initializes the public Firebase Client SDK for client-side use (e.g., Firestore queries, if needed). |
-
-### Backend API Endpoints
-
-| Endpoint | Method | Role | Status |
-| :--- | :--- | :--- | :--- |
-| `/api/auth/signup` | POST | Creates a new user in Firebase Auth and saves initial profile to Firestore. | **Operational** |
-| `/api/auth/github/callback` | GET | Completes GitHub OAuth handshake, creates/updates Firebase user, and issues Session Token. | **Operational** |
-| `/api/users/profile/onboarding` | POST | Saves multi-step onboarding data (Geo, Interests, Goals) to the user's Firestore document. | **Operational** |
-| `/api/profile/me` | PUT | Handles comprehensive profile updates (age, location, image upload, etc.). | **Planned** |
-
------
-
-## 💻 Local Setup & Development
-
-This project uses npm workspaces to manage the `frontend` (React/Vite) and `backend` (Node/Express) dependencies.
-
-### Prerequisites
-
-1.  Node.js (v18+) and npm (v8+).
-2.  **Firebase Project:** Authentication and Firestore must be enabled.
-3.  **GitHub OAuth App:** Required for social login.
-
-### 1\. Environment Variables (`.env`)
-
-You need two separate environment files to handle public and private credentials:
-
-#### A. Backend Configuration (`backend/.env`)
-
-Used by the Express server for secrets and service configuration.
-
-```env
-# Backend Secrets
-GITHUB_CLIENT_ID=...
-GITHUB_CLIENT_SECRET=...
-PORT=...
+      // Other configs...
+    ],
+    languageOptions: {
+      parserOptions: {
+        project: ['./tsconfig.node.json', './tsconfig.app.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+      // other options...
+    },
+  },
+]);
 ```
 
-#### B. Frontend Configuration (frontend/.env)
-Used by the React app (Vite) for public Firebase credentials. Must start with VITE_.
+You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
 
-```env
-VITE_FIREBASE_API_KEY=...
-VITE_FIREBASE_AUTH_DOMAIN=...
-VITE_FIREBASE_PROJECT_ID=...
-# ... other VITE_ variables
-```
+```js
+// eslint.config.js
+import reactX from 'eslint-plugin-react-x';
+import reactDom from 'eslint-plugin-react-dom';
 
-### 2\. Installation and Running
-Run all commands from the root directory of the repository.
-
-```bash
-# 1. Install dependencies for all workspaces
-npm install
-
-# 2. Run the full development stack
-# The `predev` script ensures the backend is built (tsc) before starting.
-npm run dev
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{ts,tsx}'],
+    extends: [
+      // Other configs...
+      // Enable lint rules for React
+      reactX.configs['recommended-typescript'],
+      // Enable lint rules for React DOM
+      reactDom.configs.recommended,
+    ],
+    languageOptions: {
+      parserOptions: {
+        project: ['./tsconfig.node.json', './tsconfig.app.json'],
+        tsconfigRootDir: import.meta.dirname,
+      },
+      // other options...
+    },
+  },
+]);
 ```
