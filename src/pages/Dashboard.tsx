@@ -8,11 +8,18 @@ import { CustomButton } from '../components/ui/CustomButton';
 import { ArrowLeft, LoaderCircle, MapPin, Settings, UserRound } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { LocationUpdateModal } from '../components/ui/LocationUpdateModal';
-import { getUserLocation, saveUserLocation } from '../services/location.service';
+import {
+  getUserLocation,
+  saveUserLocation,
+  type UserGeolocation,
+} from '../services/location.service';
 import { useAuth } from '../hooks/useAuth';
 
+const formatLocationLabel = (location: UserGeolocation | null) =>
+  [location?.city, location?.country].filter(Boolean).join(', ');
+
 const Dashboard: React.FC = () => {
-  const { firebaseToken, userProfile, isLoading: authLoading } = useAuth();
+  const { userProfile, isLoading: authLoading } = useAuth();
 
   const [profiles, setProfiles] = useState<Profile[]>(MOCK_PROFILES);
   const [exitDirection, setExitDirection] = useState<'left' | 'right' | null>(null);
@@ -20,7 +27,8 @@ const Dashboard: React.FC = () => {
     'linear-gradient(135deg, #1a1a1a 0%, #000000 100%)'
   );
   const [isLocationModalOpen, setIsLocationModalOpen] = useState(false);
-  const [currentLocation, setCurrentLocation] = useState(''); // fetch from profile
+  const [currentLocation, setCurrentLocation] = useState<UserGeolocation | null>(null);
+  const [isLocationLoaded, setIsLocationLoaded] = useState(false);
 
   const navigate = useNavigate();
 
@@ -63,25 +71,28 @@ const Dashboard: React.FC = () => {
   }, [profiles]);
 
   useEffect(() => {
-    const loadLocation = async () => {
-      if (userProfile?.uid && firebaseToken) {
-        try {
-          // console.log('Loading location of user:', userProfile.uid);
-          const userLocation = await getUserLocation(userProfile.uid);
+    if (authLoading) {
+      return;
+    }
 
-          setCurrentLocation(userLocation);
-          console.log('New Current Location:', userLocation);
-        } catch (e) {
-          console.error('Failed to load location:', e);
-        }
-      } else {
-        console.log('Waiting for user profile and firebase token...');
+    if (!userProfile?.uid) {
+      console.log('Waiting for user profile...');
+      return;
+    }
+
+    const loadLocation = async () => {
+      try {
+        const userLocation = await getUserLocation(userProfile.uid);
+        setCurrentLocation(userLocation);
+      } catch (e) {
+        console.error('Failed to load location:', e);
+      } finally {
+        setIsLocationLoaded(true);
       }
     };
-    if (!authLoading && userProfile?.uid && firebaseToken) {
-      loadLocation();
-    }
-  }, [firebaseToken, userProfile?.uid, authLoading]);
+
+    void loadLocation();
+  }, [authLoading, userProfile]);
 
   const handleOpenLocationUpdateModal = () => {
     setIsLocationModalOpen(true);
@@ -91,11 +102,12 @@ const Dashboard: React.FC = () => {
     setIsLocationModalOpen(false);
   };
 
-  const handleSaveLocation = (newLocation: string) => {
+  const handleSaveLocation = async (newLocation: UserGeolocation) => {
     setCurrentLocation(newLocation);
+    setIsLocationLoaded(true);
     try {
       if (!userProfile) throw new Error('User not authenticated.');
-      saveUserLocation(userProfile.uid, newLocation);
+      await saveUserLocation(userProfile.uid, newLocation);
     } catch (e) {
       console.error('Failed to save location:', e);
     }
@@ -160,7 +172,7 @@ const Dashboard: React.FC = () => {
             className="flex w-full cursor-pointer items-center justify-center gap-2 bg-white/10 px-4 text-white hover:border-green-500/50 hover:bg-green-500/20 hover:text-green-400"
           >
             <AnimatePresence mode="wait" initial={false}>
-              {!currentLocation ? (
+              {!isLocationLoaded ? (
                 <motion.div
                   key="loader"
                   initial={{ opacity: 0 }}
@@ -180,7 +192,8 @@ const Dashboard: React.FC = () => {
                     exit={{ opacity: 0, y: -8 }}
                     transition={{ duration: 0.3, ease: 'easeInOut' }}
                   >
-                    <MapPin /> {currentLocation}
+                    <MapPin />{' '}
+                    {currentLocation ? formatLocationLabel(currentLocation) : 'Set location'}
                   </motion.div>
                 </div>
               )}

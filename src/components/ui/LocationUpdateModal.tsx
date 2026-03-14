@@ -1,12 +1,22 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { MapPin, X, Navigation } from 'lucide-react';
 import { loadGoogleMaps } from '../../services/maps.service';
+import type { UserGeolocation } from '../../services/location.service';
 
 interface LocationUpdateModalProps {
   onClose: () => void;
-  onSave: (newLocation: string) => void;
-  currentLocation: string;
+  onSave: (newLocation: UserGeolocation) => void;
+  currentLocation: UserGeolocation | null;
 }
+
+const DEFAULT_MAP_CENTER = { lat: 51.5074, lng: -0.1278 };
+
+const formatLocationLabel = (location: UserGeolocation | null) =>
+  [location?.city, location?.country].filter(Boolean).join(', ');
+
+const getAddressComponent = (components: google.maps.GeocoderAddressComponent[], types: string[]) =>
+  components.find((component) => types.some((type) => component.types.includes(type)))?.long_name ??
+  '';
 
 export const LocationUpdateModal: React.FC<LocationUpdateModalProps> = ({
   onClose,
@@ -21,6 +31,10 @@ export const LocationUpdateModal: React.FC<LocationUpdateModalProps> = ({
   const markerRef = useRef<google.maps.Marker | null>(null);
 
   useEffect(() => {
+    setLocation(currentLocation);
+  }, [currentLocation]);
+
+  useEffect(() => {
     let isMounted = true;
 
     async function initMap() {
@@ -28,25 +42,39 @@ export const LocationUpdateModal: React.FC<LocationUpdateModalProps> = ({
 
       if (!isMounted || !mapRef.current || map) return;
 
+      const hasSavedCoordinates =
+        currentLocation !== null && (currentLocation.lat !== 0 || currentLocation.lng !== 0);
+      const initialCenter = hasSavedCoordinates
+        ? { lat: currentLocation.lat, lng: currentLocation.lng }
+        : DEFAULT_MAP_CENTER;
+
       const initialMap = new google.maps.Map(mapRef.current, {
-        center: { lat: 51.5074, lng: -0.1278 },
+        center: initialCenter,
         zoom: 12,
         disableDefaultUI: true,
       });
 
       initialMap.addListener('click', (e: google.maps.MapMouseEvent) => {
-        handleMapClick(e.latLng, initialMap);
+        void handleMapClick(e.latLng, initialMap);
       });
+
+      if (hasSavedCoordinates) {
+        markerRef.current = new google.maps.Marker({
+          position: initialCenter,
+          map: initialMap,
+        });
+      }
 
       setMap(initialMap);
     }
 
-    initMap();
+    void initMap();
 
     return () => {
       isMounted = false;
+      markerRef.current?.setMap(null);
     };
-  });
+  }, []);
 
   const handleMapClick = async (
     latLng: google.maps.LatLng | null | undefined,
@@ -69,18 +97,40 @@ export const LocationUpdateModal: React.FC<LocationUpdateModalProps> = ({
     await handleGeocoder(latLng);
   };
 
-  const handleGeocoder = async (latLng: google.maps.LatLng | null | undefined) => {
+  const handleGeocoder = async (
+    latLng: google.maps.LatLng | null | undefined
+  ): Promise<UserGeolocation | null> => {
+    if (!latLng) {
+      return null;
+    }
+
     const geocoder = new google.maps.Geocoder();
-    geocoder.geocode({ location: latLng }, (results, status) => {
-      if (status === 'OK' && results && results[0]) {
-        const region = results[0].address_components[1].short_name;
-        const sublocality = results[0].address_components[2].short_name;
-        const locality = results[0].address_components[3].short_name;
-        const formattedAddress = region + ', ' + sublocality + ', ' + locality;
-        setLocation(formattedAddress);
-      } else {
-        console.error('Geocode failed: ' + status);
-      }
+
+    return new Promise((resolve) => {
+      geocoder.geocode({ location: latLng }, (results, status) => {
+        if (status === 'OK' && results && results[0]) {
+          const addressComponents = results[0].address_components;
+          const resolvedLocation: UserGeolocation = {
+            city: getAddressComponent(addressComponents, [
+              'locality',
+              'postal_town',
+              'administrative_area_level_2',
+              'sublocality',
+              'sublocality_level_1',
+              'administrative_area_level_1',
+            ]),
+            country: getAddressComponent(addressComponents, ['country']),
+            lat: latLng.lat(),
+            lng: latLng.lng(),
+          };
+
+          setLocation(resolvedLocation);
+          resolve(resolvedLocation);
+        } else {
+          console.error('Geocode failed: ' + status);
+          resolve(null);
+        }
+      });
     });
   };
 
@@ -107,13 +157,17 @@ export const LocationUpdateModal: React.FC<LocationUpdateModalProps> = ({
     navigator.geolocation.getCurrentPosition(
       async (position) => {
         const { latitude, longitude } = position.coords;
+        const latLng = new google.maps.LatLng(latitude, longitude);
 
-        setTimeout(() => {
-          handleGeocoder(new google.maps.LatLng(latitude, longitude));
+        try {
+          if (map) {
+            await handleMapClick(latLng, map);
+          } else {
+            await handleGeocoder(latLng);
+          }
+        } finally {
           setLoading(false);
-        }, 1000);
-
-        handleMapClick(new google.maps.LatLng(latitude, longitude), map!);
+        }
       },
       (error) => {
         console.error(error);
@@ -122,6 +176,13 @@ export const LocationUpdateModal: React.FC<LocationUpdateModalProps> = ({
       }
     );
   };
+
+  const canSave =
+    location !== null &&
+    location.city.trim() !== '' &&
+    location.country.trim() !== '' &&
+    Number.isFinite(location.lat) &&
+    Number.isFinite(location.lng);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
@@ -149,8 +210,7 @@ export const LocationUpdateModal: React.FC<LocationUpdateModalProps> = ({
               <input
                 type="text"
                 disabled
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
+                value={formatLocationLabel(location)}
                 className="w-full rounded-xl border border-white/10 bg-white/5 py-3 pr-4 pl-10 text-white focus:border-purple-500 focus:outline-none"
                 placeholder="Enter city, country"
               />
@@ -193,8 +253,13 @@ export const LocationUpdateModal: React.FC<LocationUpdateModalProps> = ({
             Cancel
           </button>
           <button
-            onClick={() => onSave(location)}
-            className="flex-1 rounded-xl bg-linear-to-r from-purple-600 to-pink-600 py-3 text-sm font-bold text-white shadow-lg transition-transform hover:scale-[1.02]"
+            onClick={() => {
+              if (location) {
+                onSave(location);
+              }
+            }}
+            disabled={!canSave}
+            className="flex-1 rounded-xl bg-linear-to-r from-purple-600 to-pink-600 py-3 text-sm font-bold text-white shadow-lg transition-transform hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-50"
           >
             Save Changes
           </button>
