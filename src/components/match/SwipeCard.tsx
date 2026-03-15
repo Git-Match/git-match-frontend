@@ -6,28 +6,38 @@ import { CustomButton } from '../ui/CustomButton';
 const SwipeCard = ({
   profile,
   onSwipe,
+  disabled = false,
 }: {
   profile: Profile;
   onSwipe: (dir: 'left' | 'right') => void;
+  disabled?: boolean;
 }) => {
   const x = useMotionValue(0);
   const rotate = useTransform(x, [-200, 200], [-25, 25]);
 
   const handleDragEnd = (_: MouseEvent | TouchEvent | DragEvent, info: PanInfo) => {
+    if (disabled) {
+      x.set(0);
+      return;
+    }
+
     if (info.offset.x > 120) onSwipe('right');
     else if (info.offset.x < -120) onSwipe('left');
     else x.set(0);
   };
 
   const currentProfile = profile; // For clarity in JSX
+  const locationLabel = currentProfile.location || 'Location unavailable';
 
   return (
     <motion.div
-      drag="x"
+      drag={disabled ? false : 'x'}
       style={{ x, rotate }}
       dragConstraints={{ left: 0, right: 0 }}
       onDragEnd={handleDragEnd}
-      className="absolute inset-0 cursor-grab overflow-hidden rounded-3xl border-2 border-zinc-50/20 shadow-xl drop-shadow-xl backdrop-blur-md"
+      className={`absolute inset-0 overflow-hidden rounded-3xl border-2 border-zinc-50/20 shadow-xl drop-shadow-xl backdrop-blur-md ${
+        disabled ? 'cursor-wait' : 'cursor-grab'
+      }`}
     >
       <img
         src={profile.image}
@@ -46,14 +56,19 @@ const SwipeCard = ({
           <div className="mb-3 flex w-fit items-center gap-1 rounded-full bg-white/20 px-2 py-1 backdrop-blur-md">
             <MapPin size={12} className="text-white" />
             <span className="text-[10px] font-medium tracking-wide text-white uppercase">
-              {currentProfile.location}
+              {locationLabel}
             </span>
           </div>
           {/* Name & Age */}
           <h2 className="text-4xl leading-tight font-semibold text-white">
-            {currentProfile.name},{' '}
-            <span className="font-semibold text-white">{currentProfile.age}</span>
+            {currentProfile.name}
+            {typeof currentProfile.age === 'number' && (
+              <>
+                , <span className="font-semibold text-white">{currentProfile.age}</span>
+              </>
+            )}
           </h2>
+          {currentProfile.role && <p className="mt-1 text-sm text-white/75">{currentProfile.role}</p>}
           {/* Interests */}
           <div className="mt-3 flex flex-wrap gap-2">
             {currentProfile.interests.slice(0, 3).map((interest) => (
@@ -74,6 +89,7 @@ const SwipeCard = ({
           </CustomButton>
           {/* Like Button */}
           <CustomButton
+            disabled={disabled}
             onClick={() => {
               onSwipe('right');
             }}
@@ -83,6 +99,7 @@ const SwipeCard = ({
           </CustomButton>
           {/* Dismiss Button */}
           <CustomButton
+            disabled={disabled}
             onClick={() => {
               onSwipe('left');
             }}
