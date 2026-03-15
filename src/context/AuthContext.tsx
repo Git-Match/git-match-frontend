@@ -2,7 +2,7 @@ import React, { createContext, useEffect, useState, type ReactNode } from 'react
 import { useNavigate } from 'react-router-dom';
 
 import { auth } from '../config/firebase';
-import { signInWithCustomToken, signOut } from 'firebase/auth';
+import { onIdTokenChanged, signInWithCustomToken, signOut } from 'firebase/auth';
 
 // Define the shape of the context data
 interface AuthContextType {
@@ -57,6 +57,9 @@ interface AuthResponse {
   githubProfile?: UserGithubProfile;
 }
 
+const ACCESS_TOKEN_STORAGE_KEY = 'accessToken';
+const FIREBASE_TOKEN_STORAGE_KEY = 'firebaseToken';
+
 const normalizeUserProfile = (profile: any): UserProfile => ({
   uid: profile?.uid ?? '',
   fullName: profile?.fullName ?? '',
@@ -94,11 +97,58 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const navigate = useNavigate();
 
+  const persistFirebaseToken = (nextToken: string | null) => {
+    setFirebaseToken(nextToken);
+
+    if (nextToken) {
+      localStorage.setItem(FIREBASE_TOKEN_STORAGE_KEY, nextToken);
+      return;
+    }
+
+    localStorage.removeItem(FIREBASE_TOKEN_STORAGE_KEY);
+  };
+
+  const signInToFirebase = async (customToken?: string | null) => {
+    if (!customToken) {
+      persistFirebaseToken(null);
+      return null;
+    }
+
+    try {
+      const credential = await signInWithCustomToken(auth, customToken);
+      const nextFirebaseIdToken = await credential.user.getIdToken();
+      persistFirebaseToken(nextFirebaseIdToken);
+      return nextFirebaseIdToken;
+    } catch (e) {
+      console.warn('Firebase custom-token sign-in failed:', e);
+      persistFirebaseToken(null);
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    const unsubscribe = onIdTokenChanged(auth, async (user) => {
+      if (!user) {
+        persistFirebaseToken(null);
+        return;
+      }
+
+      try {
+        const nextFirebaseIdToken = await user.getIdToken();
+        persistFirebaseToken(nextFirebaseIdToken);
+      } catch (e) {
+        console.warn('Failed to refresh Firebase ID token:', e);
+      }
+    });
+
+    return unsubscribe;
+  }, []);
+
   // Restore the auth session and profile when the app starts.
   useEffect(() => {
     const bootstrapAuth = async () => {
-      const storedAccessToken = localStorage.getItem('accessToken');
-      const storedFirebaseToken = localStorage.getItem('firebaseToken');
+      const storedAccessToken = localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+      const storedFirebaseToken = localStorage.getItem(FIREBASE_TOKEN_STORAGE_KEY);
 
       if (storedAccessToken) {
         setToken(storedAccessToken);
@@ -188,29 +238,21 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return result;
       }
 
-      const idToken = result.token; // use for backend APIs
-      localStorage.setItem('accessToken', idToken);
-      setToken(idToken);
+      const accessToken = result.token;
+      localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, accessToken);
+      setToken(accessToken);
 
       if (result.firebaseToken) {
-        setFirebaseToken(result.firebaseToken);
-        localStorage.setItem('firebaseToken', result.firebaseToken);
-
-        try {
-          await signInWithCustomToken(auth, result.firebaseToken);
-        } catch (e) {
-          console.warn('Firebase custom-token sign-in failed:', e);
-        }
+        await signInToFirebase(result.firebaseToken);
       } else {
-        setFirebaseToken(null);
-        localStorage.removeItem('firebaseToken');
+        persistFirebaseToken(null);
       }
 
       if (result.user) {
         setUserProfile(normalizeUserProfile(result.user));
       }
 
-      const isComplete = await handleCheckProfileCompletion(idToken);
+      const isComplete = await handleCheckProfileCompletion(accessToken);
       navigate(isComplete ? '/dashboard' : '/onboarding');
       return { success: true, message: 'Login successful!' };
     } catch (e: any) {
@@ -244,12 +286,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
 
       if (result.success && result.token && result.firebaseToken) {
-        await signInWithCustomToken(auth, result.firebaseToken);
+        await signInToFirebase(result.firebaseToken);
 
         setToken(result.token);
-        localStorage.setItem('accessToken', result.token);
-        setFirebaseToken(result.firebaseToken);
-        localStorage.setItem('firebaseToken', result.firebaseToken);
+        localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, result.token);
 
         setUserProfile(result.user ? normalizeUserProfile(result.user) : null);
         setIsLoading(false);
@@ -342,10 +382,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     } catch (e) {
       console.warn('Firebase sign-out failed:', e);
     } finally {
-      localStorage.removeItem('accessToken');
-      localStorage.removeItem('firebaseToken');
+      localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+      localStorage.removeItem(FIREBASE_TOKEN_STORAGE_KEY);
       setToken(null);
-      setFirebaseToken(null);
+      persistFirebaseToken(null);
       setUserProfile(null);
       setIsProfileComplete(false);
       setIsLoading(false);
