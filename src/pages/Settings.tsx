@@ -1,72 +1,228 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
-  Heart,
-  Clock,
+  AlertTriangle,
   Bell,
+  ChevronRight,
+  Clock,
   Compass,
+  Heart,
+  LogOut,
+  Settings as SettingsIcon,
   Shield,
   UserCog,
-  AlertTriangle,
-  Settings as SettingsIcon,
-  LogOut,
-  ChevronRight,
 } from 'lucide-react';
+
 import { useAuth } from '../hooks/useAuth';
 
-// --- Types ---
+type ConnectionType =
+  | 'serious_relationship'
+  | 'casual_dating'
+  | 'friendship'
+  | 'open_to_anything'
+  | null;
+type SnoozeDuration = '24h' | '72h' | '1w' | 'custom';
+type ProfileVisibility = 'everyone' | 'matches_only';
+type ThemePreference = 'light' | 'dark' | 'system';
+
 interface UserSettings {
-  connection: { type: string; showOnProfile: boolean };
-  snooze: { enabled: boolean; duration: string; allowExisting: boolean; hideDiscovery: boolean };
+  connectionPreferences: {
+    connectionType: ConnectionType;
+    showOnProfile: boolean;
+  };
+  snoozeMode: {
+    enabled: boolean;
+    duration: SnoozeDuration;
+    customEndDate: string | null;
+    allowExistingMatchesToMessage: boolean;
+    hideFromDiscovery: boolean;
+  };
   notifications: {
-    messages: boolean;
-    matches: boolean;
+    newMessages: boolean;
+    newMatches: boolean;
     likes: boolean;
-    suggestions: boolean;
-    announcements: boolean;
+    matchSuggestions: boolean;
+    appAnnouncements: boolean;
     globalMute: boolean;
-    quietHours: boolean;
+    quietHours: {
+      enabled: boolean;
+      start: string;
+      end: string;
+    };
   };
-  discovery: {
-    ageMin: number;
-    ageMax: number;
-    distance: number;
+  discoveryFilters: {
+    ageMin: number | null;
+    ageMax: number | null;
+    distanceKm: number | null;
     verifiedOnly: boolean;
-    recentlyActive: boolean;
+    recentlyActiveOnly: boolean;
   };
-  privacy: { showOnline: boolean; showLastActive: boolean; visibility: string };
-  safety: { screenshotProtection: boolean };
-  preferences: { language: string; theme: string };
+  privacy: {
+    showOnlineStatus: boolean;
+    showLastActive: boolean;
+    profileVisibility: ProfileVisibility;
+  };
+  accountControls: {
+    deactivateAccount: boolean;
+    deleteAccountRequested: boolean;
+  };
+  safety: {
+    blockedUserIds: string[];
+    screenshotProtection: boolean;
+  };
+  preferences: {
+    language: string;
+    theme: ThemePreference;
+  };
+  createdAt: string;
+  updatedAt: string;
 }
 
-const defaultSettings: UserSettings = {
-  connection: { type: 'open', showOnProfile: true },
-  snooze: { enabled: false, duration: '24h', allowExisting: true, hideDiscovery: true },
-  notifications: {
-    messages: true,
-    matches: true,
-    likes: true,
-    suggestions: true,
-    announcements: false,
-    globalMute: false,
-    quietHours: false,
-  },
-  discovery: { ageMin: 18, ageMax: 35, distance: 15, verifiedOnly: false, recentlyActive: true },
-  privacy: { showOnline: true, showLastActive: false, visibility: 'everyone' },
-  safety: { screenshotProtection: true },
-  preferences: { language: 'en', theme: 'dark' },
+type DeepPartial<T> = {
+  [K in keyof T]?: T[K] extends Array<infer U>
+    ? U[]
+    : T[K] extends object
+      ? DeepPartial<T[K]>
+      : T[K];
 };
 
-// --- Reusable UI Components ---
+const SETTINGS_API_URL = `${import.meta.env.VITE_API_BASE_URL ?? 'https://git-match-backend.onrender.com'}/api/settings/me`;
+
+const defaultSettings: UserSettings = {
+  connectionPreferences: {
+    connectionType: 'open_to_anything',
+    showOnProfile: true,
+  },
+  snoozeMode: {
+    enabled: false,
+    duration: '24h',
+    customEndDate: null,
+    allowExistingMatchesToMessage: true,
+    hideFromDiscovery: true,
+  },
+  notifications: {
+    newMessages: true,
+    newMatches: true,
+    likes: true,
+    matchSuggestions: true,
+    appAnnouncements: false,
+    globalMute: false,
+    quietHours: {
+      enabled: false,
+      start: '22:00',
+      end: '07:00',
+    },
+  },
+  discoveryFilters: {
+    ageMin: 18,
+    ageMax: 35,
+    distanceKm: 15,
+    verifiedOnly: false,
+    recentlyActiveOnly: true,
+  },
+  privacy: {
+    showOnlineStatus: true,
+    showLastActive: false,
+    profileVisibility: 'everyone',
+  },
+  accountControls: {
+    deactivateAccount: false,
+    deleteAccountRequested: false,
+  },
+  safety: {
+    blockedUserIds: [],
+    screenshotProtection: true,
+  },
+  preferences: {
+    language: 'en',
+    theme: 'dark',
+  },
+  createdAt: '',
+  updatedAt: '',
+};
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const deepMerge = <T extends object>(target: T, patch: DeepPartial<T>): T => {
+  const merged = { ...target };
+
+  for (const [key, value] of Object.entries(patch as object)) {
+    if (value === undefined) {
+      continue;
+    }
+
+    const typedKey = key as keyof T;
+    const currentValue = merged[typedKey];
+
+    if (isPlainObject(currentValue) && isPlainObject(value)) {
+      merged[typedKey] = deepMerge(
+        currentValue as Record<string, unknown>,
+        value as DeepPartial<Record<string, unknown>>
+      ) as T[keyof T];
+      continue;
+    }
+
+    merged[typedKey] = (Array.isArray(value) ? [...value] : value) as T[keyof T];
+  }
+
+  return merged;
+};
+
+const normalizeSettings = (incoming?: DeepPartial<UserSettings> | null): UserSettings =>
+  deepMerge(defaultSettings, incoming ?? {});
+
+const parseNullableNumber = (value: string): number | null => {
+  if (value.trim() === '') {
+    return null;
+  }
+
+  const parsed = Number(value);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
+const toDateTimeLocalValue = (isoDate: string | null): string => {
+  if (!isoDate) {
+    return '';
+  }
+
+  const date = new Date(isoDate);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+
+  const offset = date.getTimezoneOffset();
+  const localDate = new Date(date.getTime() - offset * 60 * 1000);
+  return localDate.toISOString().slice(0, 16);
+};
+
+const formatUpdatedAt = (updatedAt: string): string | null => {
+  if (!updatedAt) {
+    return null;
+  }
+
+  const date = new Date(updatedAt);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return new Intl.DateTimeFormat('en', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(date);
+};
+
 const Toggle = ({
   checked,
   onChange,
   label,
   description,
+  disabled = false,
 }: {
   checked: boolean;
-  onChange: (c: boolean) => void;
+  onChange: (checked: boolean) => void;
   label: string;
   description?: string;
+  disabled?: boolean;
 }) => (
   <div className="flex items-center justify-between py-3">
     <div className="pr-4">
@@ -76,10 +232,15 @@ const Toggle = ({
     <button
       type="button"
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${checked ? 'bg-purple-600' : 'bg-gray-700'}`}
+      disabled={disabled}
+      className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+        checked ? 'bg-purple-600' : 'bg-gray-700'
+      } ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'}`}
     >
       <span
-        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${checked ? 'translate-x-5' : 'translate-x-0'}`}
+        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+          checked ? 'translate-x-5' : 'translate-x-0'
+        }`}
       />
     </button>
   </div>
@@ -110,11 +271,12 @@ const Section = ({
   </section>
 );
 
-// --- Main Page ---
 const Settings: React.FC = () => {
-  const { firebaseToken, isLoading } = useAuth();
+  const { firebaseToken, isLoading: authLoading, logout } = useAuth();
   const [settings, setSettings] = useState<UserSettings>(defaultSettings);
+  const [settingsLoading, setSettingsLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const sidebarLinks = [
     { id: 'connection', label: 'Connection', icon: Heart },
@@ -131,94 +293,101 @@ const Settings: React.FC = () => {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  // fetch user settings
   useEffect(() => {
     const fetchSettings = async () => {
+      if (authLoading) {
+        return;
+      }
+
+      if (!firebaseToken) {
+        setLoadError('No token provided');
+        setSettingsLoading(false);
+        return;
+      }
+
+      setSettingsLoading(true);
+      setLoadError(null);
+
       try {
-        const token = firebaseToken; // Firebase token from AuthContext
-        const response = await fetch('/api/settings/me', {
+        const response = await fetch(SETTINGS_API_URL, {
+          method: 'GET',
           headers: {
-            Authorization: `Bearer ${token}`,
+            Authorization: `Bearer ${firebaseToken}`,
           },
         });
 
-        const data = await response.json();
+        const data = await response.json().catch(() => null);
 
-        console.log(data);
-
-        if (data.success && data.settings) {
-          setSettings(data.settings);
+        if (!response.ok || !data?.success) {
+          throw new Error(data?.message || 'Failed to retrieve settings');
         }
+
+        setSettings(normalizeSettings(data.settings));
       } catch (error) {
-        console.error('Failed to fetch settings:', error);
+        const message =
+          error instanceof Error ? error.message : 'Failed to retrieve settings';
+        setLoadError(message);
+      } finally {
+        setSettingsLoading(false);
       }
     };
 
-    fetchSettings();
-  }, []);
+    void fetchSettings();
+  }, [authLoading, firebaseToken]);
 
-  const updateSetting = async <C extends keyof UserSettings, K extends keyof UserSettings[C]>(
-    category: C,
-    key: K,
-    value: UserSettings[C][K]
-  ) => {
-    const previousSettings = { ...settings };
+  const updateSettings = async (patch: DeepPartial<UserSettings>) => {
+    if (!firebaseToken) {
+      setSaveStatus('No token provided');
+      return;
+    }
 
-    setSettings((prev: UserSettings) => ({
-      ...prev,
-      [category]: {
-        ...prev[category],
-        [key]: value,
-      } as UserSettings[C],
-    }));
+    const previousSettings = settings;
+    const nextSettings = deepMerge(previousSettings, patch);
 
+    setSettings(nextSettings);
     setSaveStatus('Saving...');
 
     try {
-      const token = firebaseToken;
-
-      // API call
-      const response = await fetch('/api/settings/me', {
+      const response = await fetch(SETTINGS_API_URL, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${firebaseToken}`,
         },
-        body: JSON.stringify({
-          [category]: { [key]: value }, // Only send the changed key/value
-        }),
+        body: JSON.stringify(patch),
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => null);
 
-      console.log(data);
-
-      if (!data.success) {
-        throw new Error(data.message || 'Failed to update');
+      if (!response.ok || !data?.success) {
+        throw new Error(data?.message || 'Failed to update settings');
       }
 
+      setSettings(normalizeSettings(data.settings));
       setSaveStatus('Saved');
-      setTimeout(() => setSaveStatus(null), 2000);
+      window.setTimeout(() => setSaveStatus(null), 2000);
     } catch (error) {
-      console.error('Failed to update setting', error);
+      const message = error instanceof Error ? error.message : 'Failed to update settings';
       setSettings(previousSettings);
-      setSaveStatus('Failed to save');
-      setTimeout(() => setSaveStatus(null), 3000);
+      setSaveStatus(message);
+      window.setTimeout(() => setSaveStatus(null), 3000);
     }
   };
 
-  if (isLoading) return <div>Loading...</div>;
+  if (authLoading || settingsLoading) {
+    return <div>Loading...</div>;
+  }
+
+  const updatedAtLabel = formatUpdatedAt(settings.updatedAt);
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-[#0a0a0f] font-['Inter',sans-serif] text-gray-200">
-      {/* Toast Notification */}
       {saveStatus && (
         <div className="fixed top-4 right-4 z-50 animate-pulse rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-white shadow-lg backdrop-blur-md transition-all">
           {saveStatus}
         </div>
       )}
 
-      {/* Sidebar Navigation */}
       <aside className="hidden w-64 flex-col border-r border-white/10 bg-black/50 p-6 md:flex">
         <h1 className="mb-8 text-2xl font-bold tracking-wide text-white">Settings</h1>
         <nav className="custom-scrollbar flex flex-1 flex-col gap-2 overflow-y-auto pr-2">
@@ -235,121 +404,288 @@ const Settings: React.FC = () => {
         </nav>
       </aside>
 
-      {/* Main Scrollable Content */}
       <main className="custom-scrollbar flex-1 overflow-y-auto scroll-smooth p-4 md:p-8">
         <div className="mx-auto max-w-3xl pb-24">
-          {/* 1. Connection Preferences */}
+          <div className="mb-6 rounded-3xl border border-white/10 bg-white/5 p-5 backdrop-blur-md">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Your account settings</h2>
+                <p className="text-sm text-gray-400">
+                  These preferences are synced with your profile on the backend.
+                </p>
+              </div>
+              {updatedAtLabel && (
+                <p className="text-xs font-medium uppercase tracking-[0.2em] text-gray-500">
+                  Updated {updatedAtLabel}
+                </p>
+              )}
+            </div>
+
+            {loadError && (
+              <div className="mt-4 rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                {loadError}
+              </div>
+            )}
+          </div>
+
           <Section id="connection" title="Connection Preferences" icon={Heart}>
             <div className="mb-4 flex flex-col gap-2">
               <label className="text-sm font-medium text-gray-300">Looking for</label>
               <select
-                value={settings.connection.type}
-                onChange={(e) => updateSetting('connection', 'type', e.target.value)}
+                value={settings.connectionPreferences.connectionType ?? ''}
+                onChange={(e) =>
+                  void updateSettings({
+                    connectionPreferences: {
+                      connectionType:
+                        (e.target.value || null) as UserSettings['connectionPreferences']['connectionType'],
+                    },
+                  })
+                }
                 className="w-full rounded-xl border border-white/10 bg-black/40 p-3 text-white focus:border-purple-500 focus:outline-none"
               >
-                <option value="serious">Serious relationship</option>
-                <option value="casual">Casual dating</option>
+                <option value="">Prefer not to say</option>
+                <option value="serious_relationship">Serious relationship</option>
+                <option value="casual_dating">Casual dating</option>
                 <option value="friendship">Friendship</option>
-                <option value="open">Open to anything</option>
+                <option value="open_to_anything">Open to anything</option>
               </select>
             </div>
             <Toggle
               label="Show on profile"
               description="Let others know what you're looking for"
-              checked={settings.connection.showOnProfile}
-              onChange={(v) => updateSetting('connection', 'showOnProfile', v)}
+              checked={settings.connectionPreferences.showOnProfile}
+              onChange={(value) =>
+                void updateSettings({
+                  connectionPreferences: { showOnProfile: value },
+                })
+              }
             />
           </Section>
 
-          {/* 2. Snooze Mode */}
           <Section id="snooze" title="Snooze Mode" icon={Clock}>
             <Toggle
               label="Enable Snooze Mode"
               description="Temporarily hide your profile from new people"
-              checked={settings.snooze.enabled}
-              onChange={(v) => updateSetting('snooze', 'enabled', v)}
+              checked={settings.snoozeMode.enabled}
+              onChange={(value) =>
+                void updateSettings({
+                  snoozeMode: { enabled: value },
+                })
+              }
             />
-            {settings.snooze.enabled && (
+            {settings.snoozeMode.enabled && (
               <div className="mt-4 flex flex-col gap-4 rounded-xl border border-white/5 bg-black/30 p-4">
                 <div>
                   <label className="text-sm font-medium text-gray-300">Duration</label>
                   <select
-                    value={settings.snooze.duration}
-                    onChange={(e) => updateSetting('snooze', 'duration', e.target.value)}
+                    value={settings.snoozeMode.duration}
+                    onChange={(e) =>
+                      void updateSettings({
+                        snoozeMode: {
+                          duration: e.target.value as SnoozeDuration,
+                          customEndDate:
+                            e.target.value === 'custom'
+                              ? settings.snoozeMode.customEndDate
+                              : null,
+                        },
+                      })
+                    }
                     className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 p-3 text-white focus:border-purple-500 focus:outline-none"
                   >
                     <option value="24h">24 hours</option>
                     <option value="72h">72 hours</option>
                     <option value="1w">1 week</option>
-                    <option value="custom">Indefinitely</option>
+                    <option value="custom">Custom end time</option>
                   </select>
                 </div>
+
+                {settings.snoozeMode.duration === 'custom' && (
+                  <div>
+                    <label className="text-sm font-medium text-gray-300">Custom end date</label>
+                    <input
+                      type="datetime-local"
+                      value={toDateTimeLocalValue(settings.snoozeMode.customEndDate)}
+                      onChange={(e) =>
+                        void updateSettings({
+                          snoozeMode: {
+                            customEndDate: e.target.value
+                              ? new Date(e.target.value).toISOString()
+                              : null,
+                          },
+                        })
+                      }
+                      className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 p-3 text-white focus:border-purple-500 focus:outline-none"
+                    />
+                  </div>
+                )}
+
                 <Toggle
                   label="Allow existing matches to message"
-                  checked={settings.snooze.allowExisting}
-                  onChange={(v) => updateSetting('snooze', 'allowExisting', v)}
+                  checked={settings.snoozeMode.allowExistingMatchesToMessage}
+                  onChange={(value) =>
+                    void updateSettings({
+                      snoozeMode: {
+                        allowExistingMatchesToMessage: value,
+                      },
+                    })
+                  }
                 />
                 <Toggle
-                  label="Hide profile completely"
-                  checked={settings.snooze.hideDiscovery}
-                  onChange={(v) => updateSetting('snooze', 'hideDiscovery', v)}
+                  label="Hide from discovery"
+                  checked={settings.snoozeMode.hideFromDiscovery}
+                  onChange={(value) =>
+                    void updateSettings({
+                      snoozeMode: { hideFromDiscovery: value },
+                    })
+                  }
                 />
               </div>
             )}
           </Section>
 
-          {/* 3. Notifications */}
           <Section id="notifications" title="Notifications" icon={Bell}>
             <Toggle
               label="Global Mute"
               description="Pause all push notifications"
               checked={settings.notifications.globalMute}
-              onChange={(v) => updateSetting('notifications', 'globalMute', v)}
+              onChange={(value) =>
+                void updateSettings({
+                  notifications: { globalMute: value },
+                })
+              }
             />
             <div
-              className={`transition-opacity ${settings.notifications.globalMute ? 'pointer-events-none opacity-50' : 'opacity-100'}`}
+              className={`transition-opacity ${
+                settings.notifications.globalMute ? 'pointer-events-none opacity-50' : 'opacity-100'
+              }`}
             >
               <Toggle
                 label="New Messages"
-                checked={settings.notifications.messages}
-                onChange={(v) => updateSetting('notifications', 'messages', v)}
+                checked={settings.notifications.newMessages}
+                onChange={(value) =>
+                  void updateSettings({
+                    notifications: { newMessages: value },
+                  })
+                }
               />
               <Toggle
                 label="New Matches"
-                checked={settings.notifications.matches}
-                onChange={(v) => updateSetting('notifications', 'matches', v)}
+                checked={settings.notifications.newMatches}
+                onChange={(value) =>
+                  void updateSettings({
+                    notifications: { newMatches: value },
+                  })
+                }
               />
               <Toggle
                 label="Likes"
                 checked={settings.notifications.likes}
-                onChange={(v) => updateSetting('notifications', 'likes', v)}
+                onChange={(value) =>
+                  void updateSettings({
+                    notifications: { likes: value },
+                  })
+                }
               />
               <Toggle
-                label="Quiet Hours (Do Not Disturb)"
-                description="No notifications from 10 PM to 8 AM"
-                checked={settings.notifications.quietHours}
-                onChange={(v) => updateSetting('notifications', 'quietHours', v)}
+                label="Match Suggestions"
+                checked={settings.notifications.matchSuggestions}
+                onChange={(value) =>
+                  void updateSettings({
+                    notifications: { matchSuggestions: value },
+                  })
+                }
               />
+              <Toggle
+                label="App Announcements"
+                checked={settings.notifications.appAnnouncements}
+                onChange={(value) =>
+                  void updateSettings({
+                    notifications: { appAnnouncements: value },
+                  })
+                }
+              />
+              <Toggle
+                label="Quiet Hours"
+                description="Mute notifications during specific hours"
+                checked={settings.notifications.quietHours.enabled}
+                onChange={(value) =>
+                  void updateSettings({
+                    notifications: {
+                      quietHours: { enabled: value },
+                    },
+                  })
+                }
+              />
+              {settings.notifications.quietHours.enabled && (
+                <div className="mt-2 grid gap-4 rounded-xl border border-white/5 bg-black/30 p-4 md:grid-cols-2">
+                  <div>
+                    <label className="text-sm font-medium text-gray-300">Start time</label>
+                    <input
+                      type="time"
+                      value={settings.notifications.quietHours.start}
+                      onChange={(e) =>
+                        void updateSettings({
+                          notifications: {
+                            quietHours: { start: e.target.value },
+                          },
+                        })
+                      }
+                      className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 p-3 text-white focus:border-purple-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-300">End time</label>
+                    <input
+                      type="time"
+                      value={settings.notifications.quietHours.end}
+                      onChange={(e) =>
+                        void updateSettings({
+                          notifications: {
+                            quietHours: { end: e.target.value },
+                          },
+                        })
+                      }
+                      className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 p-3 text-white focus:border-purple-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           </Section>
 
-          {/* 4. Discovery */}
           <Section id="discovery" title="Discovery Filters" icon={Compass}>
             <div className="mb-6">
               <div className="mb-2 flex justify-between">
                 <label className="text-sm font-medium text-white">Maximum Distance</label>
                 <span className="text-sm font-bold text-purple-400">
-                  {settings.discovery.distance} km
+                  {settings.discoveryFilters.distanceKm === null
+                    ? 'Any distance'
+                    : `${settings.discoveryFilters.distanceKm} km`}
                 </span>
               </div>
               <input
                 type="range"
                 min="1"
                 max="100"
-                value={settings.discovery.distance}
-                onChange={(e) => updateSetting('discovery', 'distance', parseInt(e.target.value))}
+                value={settings.discoveryFilters.distanceKm ?? 100}
+                onChange={(e) =>
+                  void updateSettings({
+                    discoveryFilters: { distanceKm: Number(e.target.value) },
+                  })
+                }
                 className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-gray-700 accent-purple-500"
               />
+              <button
+                type="button"
+                onClick={() =>
+                  void updateSettings({
+                    discoveryFilters: { distanceKm: null },
+                  })
+                }
+                className="mt-3 text-sm font-medium text-purple-300 transition-colors hover:text-purple-200"
+              >
+                Remove distance limit
+              </button>
             </div>
 
             <div className="mb-6 flex gap-4">
@@ -358,9 +694,16 @@ const Settings: React.FC = () => {
                 <input
                   type="number"
                   min="18"
-                  max={settings.discovery.ageMax}
-                  value={settings.discovery.ageMin}
-                  onChange={(e) => updateSetting('discovery', 'ageMin', parseInt(e.target.value))}
+                  max={settings.discoveryFilters.ageMax ?? 100}
+                  value={settings.discoveryFilters.ageMin ?? ''}
+                  placeholder="Any"
+                  onChange={(e) =>
+                    void updateSettings({
+                      discoveryFilters: {
+                        ageMin: parseNullableNumber(e.target.value),
+                      },
+                    })
+                  }
                   className="mt-1 w-full rounded-xl border border-white/10 bg-black/40 p-3 text-white"
                 />
               </div>
@@ -368,10 +711,17 @@ const Settings: React.FC = () => {
                 <label className="text-sm font-medium text-gray-300">Max Age</label>
                 <input
                   type="number"
-                  min={settings.discovery.ageMin}
+                  min={settings.discoveryFilters.ageMin ?? 18}
                   max="100"
-                  value={settings.discovery.ageMax}
-                  onChange={(e) => updateSetting('discovery', 'ageMax', parseInt(e.target.value))}
+                  value={settings.discoveryFilters.ageMax ?? ''}
+                  placeholder="Any"
+                  onChange={(e) =>
+                    void updateSettings({
+                      discoveryFilters: {
+                        ageMax: parseNullableNumber(e.target.value),
+                      },
+                    })
+                  }
                   className="mt-1 w-full rounded-xl border border-white/10 bg-black/40 p-3 text-white"
                 />
               </div>
@@ -379,96 +729,138 @@ const Settings: React.FC = () => {
 
             <Toggle
               label="Verified profiles only"
-              checked={settings.discovery.verifiedOnly}
-              onChange={(v) => updateSetting('discovery', 'verifiedOnly', v)}
+              checked={settings.discoveryFilters.verifiedOnly}
+              onChange={(value) =>
+                void updateSettings({
+                  discoveryFilters: { verifiedOnly: value },
+                })
+              }
             />
             <Toggle
               label="Recently active users"
-              checked={settings.discovery.recentlyActive}
-              onChange={(v) => updateSetting('discovery', 'recentlyActive', v)}
+              checked={settings.discoveryFilters.recentlyActiveOnly}
+              onChange={(value) =>
+                void updateSettings({
+                  discoveryFilters: { recentlyActiveOnly: value },
+                })
+              }
             />
           </Section>
 
-          {/* 5. Privacy & Visibility */}
           <Section id="privacy" title="Privacy & Visibility" icon={Shield}>
             <div className="mb-4">
               <label className="text-sm font-medium text-gray-300">Profile Visibility</label>
               <select
-                value={settings.privacy.visibility}
-                onChange={(e) => updateSetting('privacy', 'visibility', e.target.value)}
-                className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 p-3 text-white focus:border-purple-500"
+                value={settings.privacy.profileVisibility}
+                onChange={(e) =>
+                  void updateSettings({
+                    privacy: {
+                      profileVisibility: e.target.value as ProfileVisibility,
+                    },
+                  })
+                }
+                className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 p-3 text-white focus:border-purple-500 focus:outline-none"
               >
                 <option value="everyone">Everyone</option>
-                <option value="matches">Matches Only</option>
-                <option value="hidden">Hidden</option>
+                <option value="matches_only">Matches only</option>
               </select>
             </div>
             <Toggle
               label="Show Online Status"
-              checked={settings.privacy.showOnline}
-              onChange={(v) => updateSetting('privacy', 'showOnline', v)}
+              checked={settings.privacy.showOnlineStatus}
+              onChange={(value) =>
+                void updateSettings({
+                  privacy: { showOnlineStatus: value },
+                })
+              }
             />
             <Toggle
               label="Show Last Active"
               checked={settings.privacy.showLastActive}
-              onChange={(v) => updateSetting('privacy', 'showLastActive', v)}
+              onChange={(value) =>
+                void updateSettings({
+                  privacy: { showLastActive: value },
+                })
+              }
             />
           </Section>
 
-          {/* 6. Account Controls */}
           <Section id="account" title="Account" icon={UserCog}>
-            <div className="flex flex-col gap-3">
-              <button className="flex w-full items-center justify-between rounded-xl border border-white/5 bg-white/5 p-4 text-left transition-colors hover:bg-white/10">
-                <span className="text-sm font-medium text-white">Change Password</span>
-                <ChevronRight size={16} className="text-gray-400" />
-              </button>
-              <button className="flex w-full items-center justify-between rounded-xl border border-orange-500/20 bg-orange-500/10 p-4 text-left text-orange-400 transition-colors hover:bg-orange-500/20">
-                <span className="text-sm font-medium">Deactivate Account (Temporary)</span>
-              </button>
-              <button className="flex w-full items-center justify-between rounded-xl border border-red-500/20 bg-red-500/10 p-4 text-left text-red-400 transition-colors hover:bg-red-500/20">
-                <span className="text-sm font-medium">Delete Account (Permanent)</span>
-              </button>
-            </div>
+            <Toggle
+              label="Deactivate Account"
+              description="Temporarily disable your account while keeping your data."
+              checked={settings.accountControls.deactivateAccount}
+              onChange={(value) =>
+                void updateSettings({
+                  accountControls: { deactivateAccount: value },
+                })
+              }
+            />
+            <Toggle
+              label="Request Account Deletion"
+              description="Marks your account for the backend delete flow."
+              checked={settings.accountControls.deleteAccountRequested}
+              onChange={(value) =>
+                void updateSettings({
+                  accountControls: { deleteAccountRequested: value },
+                })
+              }
+            />
+            <button className="mt-2 flex w-full items-center justify-between rounded-xl border border-white/5 bg-white/5 p-4 text-left transition-colors hover:bg-white/10">
+              <span className="text-sm font-medium text-white">Change Password</span>
+              <ChevronRight size={16} className="text-gray-400" />
+            </button>
           </Section>
 
-          {/* 7. Safety */}
           <Section id="safety" title="Safety" icon={AlertTriangle}>
             <Toggle
               label="Screenshot Protection"
               description="Prevent users from screenshotting your photos (Android only)"
               checked={settings.safety.screenshotProtection}
-              onChange={(v) => updateSetting('safety', 'screenshotProtection', v)}
+              onChange={(value) =>
+                void updateSettings({
+                  safety: { screenshotProtection: value },
+                })
+              }
             />
-            <div className="mt-4 flex flex-col gap-3">
-              <button className="flex w-full items-center justify-between rounded-xl border border-white/5 bg-white/5 p-4 text-left transition-colors hover:bg-white/10">
-                <span className="text-sm font-medium text-white">Manage Blocked Users</span>
-                <ChevronRight size={16} className="text-gray-400" />
-              </button>
+            <div className="mt-4 rounded-xl border border-white/5 bg-white/5 p-4">
+              <p className="text-sm font-medium text-white">Blocked users</p>
+              <p className="mt-1 text-sm text-gray-400">
+                {settings.safety.blockedUserIds.length} account
+                {settings.safety.blockedUserIds.length === 1 ? '' : 's'} currently blocked.
+              </p>
             </div>
           </Section>
 
-          {/* 8. App Preferences */}
           <Section id="preferences" title="App Preferences" icon={SettingsIcon}>
             <div className="flex flex-col gap-4">
               <div>
                 <label className="text-sm font-medium text-gray-300">Language</label>
                 <select
                   value={settings.preferences.language}
-                  onChange={(e) => updateSetting('preferences', 'language', e.target.value)}
+                  onChange={(e) =>
+                    void updateSettings({
+                      preferences: { language: e.target.value },
+                    })
+                  }
                   className="mt-2 w-full rounded-xl border border-white/10 bg-black/40 p-3 text-white focus:border-purple-500"
                 >
                   <option value="en">English</option>
-                  <option value="es">Español</option>
-                  <option value="fr">Français</option>
+                  <option value="es">Espanol</option>
+                  <option value="fr">Francais</option>
                 </select>
               </div>
               <div>
                 <label className="text-sm font-medium text-gray-300">Theme</label>
                 <div className="mt-2 flex gap-3">
-                  {['light', 'dark', 'system'].map((theme) => (
+                  {(['light', 'dark', 'system'] as ThemePreference[]).map((theme) => (
                     <button
                       key={theme}
-                      onClick={() => updateSetting('preferences', 'theme', theme)}
+                      onClick={() =>
+                        void updateSettings({
+                          preferences: { theme },
+                        })
+                      }
                       className={`flex-1 rounded-lg border px-4 py-2 text-sm font-medium capitalize transition-colors ${
                         settings.preferences.theme === theme
                           ? 'border-purple-500 bg-purple-600/30 text-purple-200'
@@ -483,9 +875,11 @@ const Settings: React.FC = () => {
             </div>
           </Section>
 
-          {/* Log Out Button */}
           <div className="mt-12">
-            <button className="flex w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 p-4 text-gray-300 transition-colors hover:bg-white/10 hover:text-white">
+            <button
+              onClick={() => void logout()}
+              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 p-4 text-gray-300 transition-colors hover:bg-white/10 hover:text-white"
+            >
               <LogOut size={20} />
               <span className="font-bold">Log Out</span>
             </button>
