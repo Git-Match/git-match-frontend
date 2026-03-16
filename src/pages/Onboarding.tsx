@@ -285,9 +285,13 @@ const Onboarding: FC = () => {
           // 'dob' -> 'dateOfBirth' to match backend's variable name
           dateOfBirth: finalData.dob,
           geolocation: finalData.geolocation,
-          genderPreference: finalData.genderPreference,
-          interests: finalData.interests,
-          relationshipGoals: finalData.relationshipGoals,
+          gender: finalData.genderPreference || null,
+          interest:
+            finalData.interests
+              .map((interest) => interest.trim())
+              .filter(Boolean)
+              .join(', ') || null,
+          goal: finalData.relationshipGoals || null,
         }),
       });
 

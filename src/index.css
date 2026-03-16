@@ -1,6 +1,17 @@
+@import url('https://fonts.googleapis.com/css2?family=Jersey+10&display=swap');
 @import 'tailwindcss';
 
-@import url('https://fonts.googleapis.com/css2?family=Jersey+10&display=swap');
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  background: #05010b;
+  color: #f5efff;
+  overflow-x: hidden;
+}
 
 .font-pixel {
   font-family: 'Jersey 10', cursive;
