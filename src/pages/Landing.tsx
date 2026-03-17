@@ -2,11 +2,13 @@ import { type FC } from 'react';
 import BgGradient from '../components/ui/BgGradient';
 import GitMatchHeroImageURL from '../assets/git-match-hero-img.png';
 import Header from '../components/layout/Header';
+import { useNavigate } from 'react-router-dom';
 
 const LandingPage: FC = () => {
+  const navigate = useNavigate();
   // Handler for the "Get Started" button
   const onGetStarted = () => {
-    console.log('Get Started Clicked');
+    navigate('/dashboard');
   };
 
   return (
