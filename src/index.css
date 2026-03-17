@@ -1,0 +1,27 @@
+@import url('https://fonts.googleapis.com/css2?family=Jersey+10&display=swap');
+@import 'tailwindcss';
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  background: #05010b;
+  color: #f5efff;
+  overflow-x: hidden;
+}
+
+.font-pixel {
+  font-family: 'Jersey 10', cursive;
+}
+
+.bg-gradient-custom {
+  background-image: radial-gradient(
+    ellipse at center right,
+    #990099 0%,
+    /* Bright magenta on the far right */ #26004d 40%,
+    /* Dark indigo in the middle */ #000000 90% /* Black on the far left */
+  );
+}
