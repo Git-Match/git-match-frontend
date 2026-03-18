@@ -1,11 +1,13 @@
-import { useEffect, useState, type ChangeEvent, type FC } from 'react';
+import { useEffect, useRef, useState, type ChangeEvent, type FC } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 import BgGradient from '../components/ui/BgGradient';
+import { CropperModal } from '../components/ui/CropperModal';
 import { InputField } from '../components/ui/InputField';
 import { auth } from '../config/firebase';
 import { useAuth } from '../hooks/useAuth';
+import { getUserGallery, saveUserGallery } from '../services/galleryService';
 
 const PROFILE_API_URL = `${import.meta.env.VITE_API_BACKEND_BASE_URL}/api/profile/me`;
 const DEFAULT_PROFILE_PICTURE =
@@ -76,6 +78,15 @@ type SaveStatus = {
   message: string;
   error: boolean;
 };
+
+type GalleryImage = {
+  id: string;
+  src: string;
+  caption: string;
+  isPrimary: boolean;
+};
+
+type StoredGalleryImage = Partial<GalleryImage> | string;
 
 const emptyProfileData: UserProfile = {
   fullName: '',
@@ -192,6 +203,84 @@ const resolveProfileInterests = (profile?: RawProfile | null) =>
 const extractProfileAge = (profile?: RawProfile | null) =>
   typeof profile?.age === 'number' && Number.isFinite(profile.age) ? profile.age : null;
 
+const createGalleryImageId = () => Math.random().toString(36).slice(2, 11);
+
+const normalizeGalleryImages = (gallery: StoredGalleryImage[]): GalleryImage[] => {
+  const normalizedGallery = gallery
+    .map((image) => {
+      if (typeof image === 'string') {
+        const src = image.trim();
+
+        if (!src) {
+          return null;
+        }
+
+        return {
+          id: createGalleryImageId(),
+          src,
+          caption: '',
+          isPrimary: false,
+        };
+      }
+
+      const src = image.src?.trim();
+
+      if (!src) {
+        return null;
+      }
+
+      return {
+        id: image.id?.trim() || createGalleryImageId(),
+        src,
+        caption: image.caption?.trim() || '',
+        isPrimary: Boolean(image.isPrimary),
+      };
+    })
+    .filter((image): image is GalleryImage => image !== null);
+
+  if (!normalizedGallery.length) {
+    return [];
+  }
+
+  if (normalizedGallery.some((image) => image.isPrimary)) {
+    return normalizedGallery;
+  }
+
+  return normalizedGallery.map((image, index) => ({
+    ...image,
+    isPrimary: index === 0,
+  }));
+};
+
+const resolvePrimaryGalleryImage = (gallery: GalleryImage[]): string | null => {
+  const primaryImage = gallery.find((image) => image.isPrimary);
+  const fallbackImage = gallery[0];
+
+  return primaryImage?.src || fallbackImage?.src || null;
+};
+
+const buildUpdatedPrimaryGallery = (gallery: GalleryImage[], nextSrc: string): GalleryImage[] => {
+  if (!gallery.length) {
+    return [
+      {
+        id: createGalleryImageId(),
+        src: nextSrc,
+        caption: '',
+        isPrimary: true,
+      },
+    ];
+  }
+
+  const primaryIndex = gallery.findIndex((image) => image.isPrimary);
+  const targetIndex = primaryIndex >= 0 ? primaryIndex : 0;
+
+  return gallery.map((image, index) => ({
+    ...image,
+    src: index === targetIndex ? nextSrc : image.src,
+    isPrimary: index === targetIndex,
+  }));
+};
+
 const mapProfileToUserProfile = (profile?: RawProfile | null): UserProfile => {
   const { predefinedInterests, otherInterest } = splitInterestSelections(
     resolveProfileInterests(profile)
@@ -224,17 +313,24 @@ const resolveProfileAuthToken = async (fallbackToken: string | null) => {
 };
 
 const Profile: FC = () => {
-  const { firebaseToken, isLoading: authLoading } = useAuth();
+  const { firebaseToken, userProfile, isLoading: authLoading } = useAuth();
   const navigate = useNavigate();
+  const photoInputRef = useRef<HTMLInputElement>(null);
   const [profileData, setProfileData] = useState<UserProfile>(emptyProfileData);
   const [profilePicture, setProfilePicture] = useState(DEFAULT_PROFILE_PICTURE);
+  const [galleryImages, setGalleryImages] = useState<GalleryImage[]>([]);
   const [profileAge, setProfileAge] = useState<number | null>(null);
   const [isProfileLoading, setIsProfileLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isPhotoUploading, setIsPhotoUploading] = useState(false);
+  const [selectedPhotoFile, setSelectedPhotoFile] = useState<string | null>(null);
+  const [isCropperOpen, setIsCropperOpen] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus | null>(null);
 
   const age = calculateAge(profileData.dob) ?? profileAge;
+  const displayedProfilePicture =
+    resolvePrimaryGalleryImage(galleryImages) || profilePicture || DEFAULT_PROFILE_PICTURE;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -296,6 +392,45 @@ const Profile: FC = () => {
     return () => controller.abort();
   }, [authLoading, firebaseToken]);
 
+  useEffect(() => {
+    let isActive = true;
+
+    const fetchGalleryProfilePicture = async () => {
+      if (authLoading) {
+        return;
+      }
+
+      if (!userProfile?.uid || !firebaseToken) {
+        setGalleryImages([]);
+        return;
+      }
+
+      try {
+        const savedImages = await getUserGallery(userProfile.uid);
+        const normalizedGallery = normalizeGalleryImages(savedImages as StoredGalleryImage[]);
+
+        if (!isActive) {
+          return;
+        }
+
+        setGalleryImages(normalizedGallery);
+      } catch (error) {
+        if (!isActive) {
+          return;
+        }
+
+        console.error('Failed to load gallery profile picture:', error);
+        setGalleryImages([]);
+      }
+    };
+
+    void fetchGalleryProfilePicture();
+
+    return () => {
+      isActive = false;
+    };
+  }, [authLoading, firebaseToken, userProfile?.uid]);
+
   const updateProfileField = <K extends keyof UserProfile>(field: K, value: UserProfile[K]) => {
     setSaveStatus(null);
     setProfileData((prev) => ({
@@ -322,6 +457,88 @@ const Profile: FC = () => {
           : [...prev.interests, interest],
       };
     });
+  };
+
+  const closeCropper = () => {
+    setIsCropperOpen(false);
+    setSelectedPhotoFile(null);
+  };
+
+  const handlePhotoPickerOpen = () => {
+    if (authLoading || isProfileLoading || isPhotoUploading) {
+      return;
+    }
+
+    setSaveStatus(null);
+    photoInputRef.current?.click();
+  };
+
+  const handlePhotoSelection = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file) {
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        setSaveStatus({
+          message: 'Failed to read the selected image.',
+          error: true,
+        });
+        return;
+      }
+
+      setSelectedPhotoFile(reader.result);
+      setIsCropperOpen(true);
+    };
+
+    reader.onerror = () => {
+      setSaveStatus({
+        message: 'Failed to read the selected image.',
+        error: true,
+      });
+    };
+
+    reader.readAsDataURL(file);
+  };
+
+  const handleProfilePhotoCropComplete = async (croppedImageBase64: string) => {
+    if (!userProfile?.uid) {
+      setSaveStatus({
+        message: 'User not authenticated.',
+        error: true,
+      });
+      closeCropper();
+      return;
+    }
+
+    setIsPhotoUploading(true);
+    setSaveStatus({
+      message: 'Uploading profile photo...',
+      error: false,
+    });
+
+    try {
+      const updatedGallery = buildUpdatedPrimaryGallery(galleryImages, croppedImageBase64);
+      await saveUserGallery(userProfile.uid, updatedGallery);
+      setGalleryImages(updatedGallery);
+      setSaveStatus({
+        message: 'Profile photo updated successfully.',
+        error: false,
+      });
+    } catch (error) {
+      setSaveStatus({
+        message: error instanceof Error ? error.message : 'Failed to update profile photo',
+        error: true,
+      });
+    } finally {
+      setIsPhotoUploading(false);
+      closeCropper();
+    }
   };
 
   const handleSave = async () => {
@@ -411,7 +628,23 @@ const Profile: FC = () => {
     <div className="relative isolate min-h-dvh w-full overflow-x-clip bg-[#05010b] text-white">
       <BgGradient />
 
+      {isCropperOpen && selectedPhotoFile && (
+        <CropperModal
+          imageSrc={selectedPhotoFile}
+          onCancel={closeCropper}
+          onCropComplete={(croppedImageBase64) => void handleProfilePhotoCropComplete(croppedImageBase64)}
+        />
+      )}
+
       <div className="relative z-10 mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
+        <input
+          ref={photoInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handlePhotoSelection}
+          className="hidden"
+        />
+
         <button
           type="button"
           onClick={() => navigate('/dashboard')}
@@ -429,10 +662,7 @@ const Profile: FC = () => {
           {/* LEFT COLUMN: MASSIVE PROFILE PHOTO & UPLOAD */}
           <div className="relative overflow-hidden rounded-[2.5rem] border border-white/10 shadow-[0_30px_120px_rgba(192,38,211,0.15)] lg:sticky lg:top-10 lg:col-span-5 lg:h-[calc(100vh-5rem)]">
             <img
-              src={
-                profilePicture ||
-                'https://images.unsplash.com/photo-1605776332618-6f0b905be303?q=80&w=1500&auto=format&fit=crop'
-              }
+              src={displayedProfilePicture}
               alt="Main Profile"
               className="absolute inset-0 h-full w-full object-cover"
             />
@@ -441,7 +671,16 @@ const Profile: FC = () => {
             <div className="absolute inset-0 bg-linear-to-t from-black/80 via-transparent to-black/20" />
 
             {/* Hover Overlay for Uploading */}
-            <div className="group absolute inset-0 flex cursor-pointer flex-col items-center justify-center bg-black/40 text-white opacity-0 backdrop-blur-sm transition-opacity duration-300 hover:opacity-100">
+            <button
+              type="button"
+              onClick={handlePhotoPickerOpen}
+              disabled={authLoading || isProfileLoading || isPhotoUploading}
+              className={`group absolute inset-0 flex flex-col items-center justify-center text-white backdrop-blur-sm transition-opacity duration-300 ${
+                isPhotoUploading
+                  ? 'cursor-not-allowed bg-black/60 opacity-100'
+                  : 'cursor-pointer bg-black/40 opacity-0 hover:opacity-100 focus:opacity-100'
+              }`}
+            >
               <div className="mb-3 rounded-full bg-fuchsia-500/20 p-4 text-fuchsia-300 backdrop-blur-md">
                 <svg className="h-8 w-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path
@@ -458,8 +697,10 @@ const Profile: FC = () => {
                   />
                 </svg>
               </div>
-              <span className="font-semibold tracking-wide">Update Photo</span>
-            </div>
+              <span className="font-semibold tracking-wide">
+                {isPhotoUploading ? 'Uploading Photo...' : 'Update Photo'}
+              </span>
+            </button>
 
             {/* Quick Preview Info fixed to the bottom of the photo */}
             <div className="pointer-events-none absolute right-0 bottom-0 left-0 p-8">
@@ -507,7 +748,9 @@ const Profile: FC = () => {
 
             <div
               className={`space-y-6 transition-opacity ${
-                isProfileLoading || isSaving ? 'pointer-events-none opacity-60' : 'opacity-100'
+                isProfileLoading || isSaving || isPhotoUploading
+                  ? 'pointer-events-none opacity-60'
+                  : 'opacity-100'
               }`}
             >
               {/* Grid for standard text inputs */}
@@ -663,9 +906,9 @@ const Profile: FC = () => {
                 <button
                   type="button"
                   onClick={() => void handleSave()}
-                  disabled={isProfileLoading || isSaving}
+                  disabled={isProfileLoading || isSaving || isPhotoUploading}
                   className={`w-full rounded-full bg-linear-to-r from-purple-600 to-fuchsia-500 px-10 py-4 font-bold tracking-wider text-white shadow-lg shadow-purple-500/30 transition-all sm:w-auto ${
-                    isProfileLoading || isSaving
+                    isProfileLoading || isSaving || isPhotoUploading
                       ? 'cursor-not-allowed opacity-70'
                       : 'cursor-pointer hover:scale-[1.02] hover:shadow-fuchsia-500/40'
                   }`}
