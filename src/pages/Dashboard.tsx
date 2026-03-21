@@ -525,7 +525,11 @@ const Dashboard: React.FC = () => {
               exit="exit"
               className="absolute inset-0 h-full w-full"
             >
-              <SwipeCard profile={profiles[0]} onSwipe={handleSwipe} disabled={isSwipePending} />
+              <SwipeCard
+                profile={profiles[0]}
+                onSwipe={handleSwipe}
+                disabled={isSwipePending}
+              />
             </motion.div>
           ) : (
             <div className="z-20 text-center text-white">
